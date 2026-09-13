@@ -1,0 +1,128 @@
+name: MKV to HLS (Video Copy + Telugu 5.1 Audio)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      # 1. Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # 2. Install FFmpeg
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+          ffmpeg -version
+          ffprobe -version
+
+      # 3. Convert MKV to HLS
+      - name: Convert MKV to HLS with Telugu 5.1 audio
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Replace this with a new valid download URL.
+          # Use "&", not "&amp;".
+          INPUT_URL="https://filetolink2bot-0944e29c8e8c.herokuapp.com/dl/6aa6bcd09685a5f5b5e4308c"
+
+          OUTPUT_FOLDER="majili"
+          OUTPUT_PATH="${OUTPUT_FOLDER}/playlist.m3u8"
+
+          echo "Preparing output directory..."
+
+          # Remove previous playlist and segments to prevent stale files.
+          rm -rf "${OUTPUT_FOLDER}"
+          mkdir -p "${OUTPUT_FOLDER}"
+
+          echo "Checking available streams..."
+
+          ffprobe \
+            -v error \
+            -show_entries stream=index,codec_type,codec_name,channels:stream_tags=language,title \
+            -of default=noprint_wrappers=1 \
+            "${INPUT_URL}"
+
+          echo "Converting to HLS..."
+          echo "Video: direct copy"
+          echo "Audio: Telugu direct copy (original 5.1 HE-AAC)"
+
+          ffmpeg -y \
+            -i "${INPUT_URL}" \
+            -map 0:v:0 \
+            -map "0:a:m:language:tel" \
+            -sn \
+            -dn \
+            -c:v copy \
+            -c:a copy \
+            -metadata:s:a:0 language=tel \
+            -metadata:s:a:0 title="Telugu 5.1" \
+            -f hls \
+            -hls_time 10 \
+            -hls_playlist_type vod \
+            -hls_segment_filename "${OUTPUT_FOLDER}/segment%05d.ts" \
+            "${OUTPUT_PATH}"
+
+          echo "Checking generated playlist..."
+
+          if [ ! -s "${OUTPUT_PATH}" ]; then
+            echo "HLS playlist was not generated."
+            exit 1
+          fi
+
+          SEGMENT_COUNT="$(find "${OUTPUT_FOLDER}" -maxdepth 1 -type f -name 'segment*.ts' | wc -l)"
+
+          if [ "${SEGMENT_COUNT}" -eq 0 ]; then
+            echo "No HLS segments were generated."
+            exit 1
+          fi
+
+          echo "HLS conversion completed successfully."
+          echo "Playlist: ${OUTPUT_PATH}"
+          echo "Segments generated: ${SEGMENT_COUNT}"
+          du -sh "${OUTPUT_FOLDER}"
+
+      # 4. Commit and push generated HLS files
+      - name: Commit and push HLS output
+        shell: bash
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_PAT:-}" ]; then
+            echo "GH_PAT secret is not configured."
+            exit 1
+          fi
+
+          git config user.name "pothabattulavinod"
+          git config user.email "vinodyadavpothabattula666@gmail.com"
+
+          git add -A majili
+
+          if git diff --cached --quiet; then
+            echo "No new or changed HLS files to commit."
+            exit 0
+          fi
+
+          git commit -m "Add Telugu 5.1 HLS output [skip ci]"
+
+          git remote remove origin || true
+          git remote add origin \
+            "https://x-access-token:${GH_PAT}@github.com/pothabattulavinod/adc12.git"
+
+          git push origin HEAD:main
+
+          echo "HLS files pushed successfully."
